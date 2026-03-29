@@ -1,1 +1,3 @@
 # HI2
+# HW2 – McPhee Reservoir Management Analysis
+This repository contains a Python-based hydroinformatics analysis of **McPhee Reservoir** on the Dolores River in southwestern Colorado. The analysis integrates April 1 Snow Water Equivalent (SWE) observations from SNOTEL stations in the Dolores River watershed with historical USGS streamflow records to characterize seasonal water availability and inform reservoir operations. Watershed delineation is performed programmatically via the USGS NLDI, and elevation data are retrieved from 3DEP. All data acquisition, processing, and figures are generated automatically with no user input required.
