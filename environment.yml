@@ -1,0 +1,17 @@
+name: hw2-reservoir
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - numpy
+  - pandas
+  - geopandas
+  - matplotlib
+  - contextily
+  - folium
+  - requests
+  - ipykernel
+  - py3dep
+  - pynhd
+  - dataretrieval
