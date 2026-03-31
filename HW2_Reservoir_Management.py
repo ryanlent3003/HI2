@@ -55,10 +55,11 @@ This section produces:
 ## 1.1 Import Libraries and Configure Environment
 """
 
-import sys
 import os
+import io
 import warnings
 import datetime
+import requests
 
 # Resolve all paths relative to this script's directory so the script is
 # portable and can be run from any working directory.
@@ -83,12 +84,6 @@ except Exception:
     # Fallback: plain print() when running outside a Jupyter kernel.
     def display(obj):
         print(obj)
-
-# Path to shared supporting_scripts (getData, mapping)
-SCRIPTS_PATH = os.path.join(BASE_DIR, '..', 'Data-Acquisition-Processing-Analysis')
-if SCRIPTS_PATH not in sys.path:
-    sys.path.insert(0, SCRIPTS_PATH)
-from supporting_scripts import getData, mapping
 
 warnings.filterwarnings('ignore')
 print('Libraries loaded successfully.')
@@ -609,6 +604,56 @@ def simple_regression(x, y):
     corr = np.corrcoef(x_valid, y_valid)[0, 1]
     return slope, intercept, corr ** 2, x_valid, y_valid
 
+# Download daily SNOTEL SWE from the NRCS report endpoint and cache as CSV.
+def fetch_snotel_swe_csv(site_name, site_id, state_abb, start_date, end_date, output_folder):
+    site_core = str(site_id).split('_')[0]
+    url = (
+        'https://wcc.sc.egov.usda.gov/reportGenerator/view_csv/'
+        'customMultiTimeSeriesGroupByStationReport/daily/start_of_period/'
+        f'{site_core}:{state_abb}:SNTL%7Cid=%22%22%7Cname/'
+        f'{start_date},{end_date}/'
+        'WTEQ::value?fitToScreen=false'
+    )
+
+    print(f'Start retrieving data for {site_name}, {site_id} \n {url}')
+    response = requests.get(
+        url,
+        headers={
+            'User-Agent': 'Mozilla/5.0',
+            'Accept': 'text/csv,text/plain,*/*',
+            'Connection': 'keep-alive'
+        },
+        timeout=(5, 30)
+    )
+    response.raise_for_status()
+
+    lines = [line.strip() for line in response.text.splitlines() if line.strip() and not line.startswith('#')]
+    if not lines:
+        raise ValueError(f'No parseable data returned for {site_id}')
+
+    csv_start = 0
+    for idx, line in enumerate(lines):
+        if line.lower().startswith('date,'):
+            csv_start = idx
+            break
+
+    df = pd.read_csv(io.StringIO('\n'.join(lines[csv_start:])))
+    if df.shape[1] < 2:
+        preview = '\n'.join(lines[:5])
+        raise ValueError(f'Unexpected SNOTEL CSV format for {site_id}. Preview:\n{preview}')
+
+    df = df.iloc[:, :2].copy()
+    df.columns = ['Date', 'Snow Water Equivalent (m) Start of Day Values']
+    df['Date'] = pd.to_datetime(df['Date'])
+    df['Snow Water Equivalent (m) Start of Day Values'] = (
+        pd.to_numeric(df['Snow Water Equivalent (m) Start of Day Values'], errors='coerce') * 0.0254
+    )
+    df.dropna(subset=['Date', 'Snow Water Equivalent (m) Start of Day Values'], inplace=True)
+    df['Water_Year'] = df['Date'].map(lambda x: x.year + 1 if x.month > 9 else x.year)
+
+    output_path = os.path.join(output_folder, f'df_{site_id}_{state_abb}_SNTL.csv')
+    df.to_csv(output_path, index=False)
+
 tick_labels = ['10-01', '12-01', '02-01', '04-01', '06-01', '08-01']
 tick_positions = [i for i, val in enumerate([d for d in pd.date_range('2000-10-01', '2001-09-30', freq='D').strftime('%m-%d') if d != '02-29']) if val in tick_labels]
 
@@ -663,7 +708,7 @@ for _, row in snotel_iter_df.iterrows():
     site_file = os.path.join(FILES_DIR, f'df_{site_code}_{site_state}_SNTL.csv')
 
     if not os.path.exists(site_file):
-        getData.getSNOTELData(site_name, site_code, site_state, SNOTEL_START, SNOTEL_END, FILES_DIR)
+        fetch_snotel_swe_csv(site_name, site_code, site_state, SNOTEL_START, SNOTEL_END, FILES_DIR)
 
     site_df = pd.read_csv(site_file)
     swe_col = 'Snow Water Equivalent (m) Start of Day Values'
