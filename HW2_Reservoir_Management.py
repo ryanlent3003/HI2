@@ -544,6 +544,7 @@ Outputs in this section include:
 
 from dataretrieval import nwis
 
+# Analysis window and unit-conversion constants used across SWE/flow sections.
 FORECAST_DATE = pd.Timestamp(DECISION_DATE)
 FORECAST_WY = FORECAST_DATE.year + 1 if FORECAST_DATE.month >= 10 else FORECAST_DATE.year
 SNOTEL_START = '1981-10-01'
@@ -554,6 +555,7 @@ CFS_TO_ACFT_DAY = 1.98347
 MONTHS = [4, 5, 6, 7, 8, 9]
 MONTH_LABELS = {4: 'April', 5: 'May', 6: 'June', 7: 'July', 8: 'August', 9: 'September'}
 
+# Add standard water-year and calendar helper columns for time-series analysis.
 def add_water_year_columns(df, date_col='Date'):
     out = df.copy()
     out[date_col] = pd.to_datetime(out[date_col])
@@ -563,6 +565,7 @@ def add_water_year_columns(df, date_col='Date'):
     out['month_day'] = out[date_col].dt.strftime('%m-%d')
     return out
 
+# Build a daily climatology envelope and isolate the target water year trace.
 def build_dayofyear_climatology(df, value_col, target_wy):
     work = df.copy()
     work['Date'] = pd.to_datetime(work['Date'])
@@ -585,6 +588,7 @@ def build_dayofyear_climatology(df, value_col, target_wy):
         clim[f'{target_wy}_value'] = pivot[target_wy]
     return clim, pivot, hist
 
+# Compute non-parametric percentile rank of a target value against historical samples.
 def empirical_percentile(hist_values, target_value):
     vals = np.asarray(hist_values, dtype=float)
     vals = vals[np.isfinite(vals)]
@@ -592,6 +596,7 @@ def empirical_percentile(hist_values, target_value):
         return np.nan
     return 100.0 * np.mean(vals <= target_value)
 
+# Fit a simple linear regression and return slope/intercept plus R^2 diagnostics.
 def simple_regression(x, y):
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -639,6 +644,7 @@ The table below describes the SNOTEL sites found inside the delineated watershed
 if len(gdf_in_basin) == 0:
     raise ValueError('No SNOTEL stations were found inside the delineated basin.')
 
+# Containers for per-station time series, climatologies, metadata, and April 1 metrics.
 snotel_series = {}
 station_climatologies = {}
 snotel_site_rows = []
@@ -648,6 +654,8 @@ snotel_iter_df = gdf_in_basin.copy()
 if 'elevation' in snotel_iter_df.columns:
     snotel_iter_df = snotel_iter_df.sort_values('elevation', ascending=False)
 
+# Loop through each in-basin SNOTEL site: download/load SWE, compute climatology,
+# and assemble station-level summary metrics used later in figures and discussion.
 for _, row in snotel_iter_df.iterrows():
     site_code = str(row.get('code'))
     site_name = row.get('name', site_code)
@@ -702,6 +710,7 @@ for _, row in snotel_iter_df.iterrows():
         'april1_percentile': empirical_percentile(hist_apr1, target_apr1)
     })
 
+# Convert accumulated dictionaries/records into final analysis tables and basin index series.
 snotel_sites_df = pd.DataFrame(snotel_site_rows).sort_values(['elevation_m', 'site_code'], ascending=[False, True], na_position='last')
 station_april1_df = pd.DataFrame(station_april1_rows).sort_values('pct_of_median_apr1', ascending=False)
 
@@ -753,6 +762,7 @@ nrows = int(np.ceil(num_sites / ncols))
 fig, axes = plt.subplots(nrows, ncols, figsize=(14, 4.5 * nrows), sharex=True, sharey=True)
 axes = np.atleast_1d(axes).ravel()
 
+# Plot one panel per station showing historical SWE envelope plus WY target trace.
 for ax, (site_code, info) in zip(axes, station_climatologies.items()):
     clim = info['clim']
     x = np.arange(len(clim.index))
@@ -783,6 +793,7 @@ swe_sites_fig = os.path.join(FIGURES_DIR, '03_snotel_station_climatology.png')
 plt.savefig(swe_sites_fig, dpi=150, bbox_inches='tight')
 plt.show()
 
+# Plot basin-mean SWE climatology and target year to summarize watershed-scale snowpack.
 fig, ax = plt.subplots(figsize=(11, 5))
 x = np.arange(len(basin_clim.index))
 ax.fill_between(x, basin_clim['Q10'], basin_clim['Q90'], color='lightskyblue', alpha=0.35, label='10th–90th percentile')
@@ -820,6 +831,7 @@ basin_pct_median = basin_apr1_summary['pct_of_median_apr1']
 basin_pct_mean = basin_apr1_summary['pct_of_mean_apr1']
 basin_percentile = basin_apr1_summary['april1_percentile']
 
+# Classify basin snow condition on April 1 relative to historical normal.
 if pd.isna(basin_pct_median):
     swe_condition = 'unavailable because the April 1, 2025 basin SWE index could not be computed from the downloaded data.'
 elif basin_pct_median >= 110:
@@ -855,6 +867,7 @@ if isinstance(usgs_info, tuple):
     usgs_info = usgs_info[0]
 usgs_info_row = usgs_info.iloc[0]
 
+# Load cached daily streamflow if present; otherwise pull and clean from NWIS.
 streamflow_file = os.path.join(FILES_DIR, f'usgs_{USGS_GAGE_ID}_daily_flow.csv')
 if os.path.exists(streamflow_file):
     flow_df = pd.read_csv(streamflow_file, parse_dates=['Date'])
@@ -892,6 +905,7 @@ flow_df = flow_df.dropna(subset=['flow_cfs']).copy()
 flow_df = add_water_year_columns(flow_df, 'Date')
 flow_df['daily_volume_acft'] = flow_df['flow_cfs'] * CFS_TO_ACFT_DAY
 
+# Aggregate April-September daily flow to monthly volumes by water year.
 monthly_volume = (
     flow_df.loc[flow_df['month'].isin(MONTHS)]
     .groupby(['Water_Year', 'month'])['daily_volume_acft']
@@ -916,6 +930,7 @@ usgs_site_description = pd.DataFrame([{
 display(usgs_site_description.round(2))
 display(monthly_volume.describe().T[['count', 'mean', '50%', 'min', 'max']].rename(columns={'50%': 'median'}).round(1))
 
+# Visualize historical monthly inflow distributions (Apr-Sep) with boxplots.
 fig, axes = plt.subplots(2, 3, figsize=(15, 8), sharey=False)
 axes = axes.ravel()
 
@@ -945,6 +960,7 @@ plt.show()
 
 print(f'Saved: {streamflow_hist_fig}')
 
+# Summarize April 1, 2025 flow against historical April 1 conditions.
 april1_flow_hist = flow_df.loc[
     (flow_df['month_day'] == '04-01') & (flow_df['Date'].dt.year < FORECAST_DATE.year),
     'flow_cfs'
@@ -963,6 +979,7 @@ april1_flow_summary = pd.Series({
 
 display(pd.DataFrame(april1_flow_summary).T.round(2))
 
+# Translate April 1 flow metrics into a qualitative runoff status statement.
 if pd.isna(april1_flow_summary['pct_of_median_apr1']):
     flow_condition = 'unavailable because the April 1, 2025 daily flow could not be retrieved.'
 elif april1_flow_summary['pct_of_median_apr1'] >= 110:
@@ -996,6 +1013,7 @@ The plots below relate basin-wide historical peak SWE to monthly streamflow volu
 comparison_df = pd.concat([peak_swe_by_wy, monthly_volume[MONTHS]], axis=1).dropna().sort_index()
 historical_comparison_df = comparison_df.loc[comparison_df.index < FORECAST_WY].copy()
 
+# Create monthly parity plots linking peak SWE to downstream monthly flow volumes.
 fig, axes = plt.subplots(2, 3, figsize=(15, 8), sharex=False, sharey=False)
 axes = axes.ravel()
 monthly_relationship_rows = []
@@ -1039,6 +1057,7 @@ parity_fig = os.path.join(FIGURES_DIR, '06_peak_swe_vs_monthly_volume.png')
 plt.savefig(parity_fig, dpi=150, bbox_inches='tight')
 plt.show()
 
+# Rank months by explanatory power (R^2) to identify strongest SWE-flow relationship.
 monthly_relationship_df = pd.DataFrame(monthly_relationship_rows).sort_values('r_squared', ascending=False)
 display(monthly_relationship_df.round(3))
 print(f'Saved: {parity_fig}')
@@ -1067,6 +1086,7 @@ seasonal_volume = monthly_volume[MONTHS].sum(axis=1).rename('apr_sep_volume_acft
 forecast_relation_df = pd.concat([april1_swe_by_wy, seasonal_volume], axis=1).dropna().sort_index()
 historical_forecast_df = forecast_relation_df.loc[forecast_relation_df.index < FORECAST_WY].copy()
 
+# Fit a forecasting relationship: April 1 basin SWE -> Apr-Sep inflow volume.
 forecast_slope, forecast_intercept, forecast_r2, x_valid, y_valid = simple_regression(
     historical_forecast_df['april1_basin_swe_in'].values,
     historical_forecast_df['apr_sep_volume_acft'].values
@@ -1080,6 +1100,7 @@ historical_median_seasonal_volume = historical_forecast_df['apr_sep_volume_acft'
 prediction_pct_mean = 100.0 * predicted_seasonal_volume / historical_mean_seasonal_volume if historical_mean_seasonal_volume else np.nan
 prediction_pct_median = 100.0 * predicted_seasonal_volume / historical_median_seasonal_volume if historical_median_seasonal_volume else np.nan
 
+# Convert quantitative forecast signal into an operator-facing management message.
 if pd.isna(basin_apr1_summary['pct_of_median_apr1']):
     inflow_outlook = 'indeterminate because the April 1, 2025 SWE index is unavailable.'
     operator_message = 'Re-run the data retrieval cells and confirm the SNOTEL downloads before making an operational decision.'
